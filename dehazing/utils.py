@@ -9,7 +9,7 @@ import psutil
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from collections import deque
 
-#https://discord.com/channels/614991078352748544/654231906531147776/1185123283243389000
+#https://discord.com/channels/614991078352748544/654231906531147776/1185123283243389000 droidx
 class CameraStream(QThread):
     frame_processed = pyqtSignal(np.ndarray)
     current_process_id = psutil.Process()
@@ -69,18 +69,18 @@ class CameraStream(QThread):
         grab_thread = Thread(target=self.grab_frames, args=())
         grab_thread.daemon = True
         grab_thread.start()
-        try:
-            while not self.stop_thread and self.capture.isOpened():
+        while not self.stop_thread and self.capture.isOpened():
+            try:
                 self.status, frame = self.capture.retrieve()
                 if self.status:
                     self.img = frame
                     self.executor.submit(self.process_and_emit_frame, self.img)
                 else:
                     self.status = False  # Ensure status is False if the capture is not opened
-        except Exception as e:
-            self.executor.shutdown(False)
-            print(f"Error processing frame: {e}")
-            self.status = False  # Set status to False in case of error
+            except Exception as e:
+                self.executor.shutdown(False)
+                print(f"Error processing frame: {e}")
+                self.status = False  # Set status to False in case of error
         grab_thread.join()
 
     def process_and_emit_frame(self, frame):
