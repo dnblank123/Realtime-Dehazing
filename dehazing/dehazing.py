@@ -63,27 +63,11 @@ class DehazingCPU(object):
 
     def image_processing(self, frame):
         I = frame.astype('float64') / 255
-
-        start = time.time()
         dark = self.DarkChannel(I, 15)
-        print(f"Dark: {time.time() - start}")
-
-        start = time.time()
         A = self.EstimateA(I, dark)
-        print(f"Atmos: {time.time() - start}")
-
-        start = time.time()
         te = self.TransmissionEstimate(I, A, 3)
-        print(f"Tmap: {time.time() - start}")
-
-        start = time.time()
         t = self.GaussianTransmissionRefine(te)
-        print(f"Gauss: {time.time() - start}")
-
-        start = time.time()
         J = self.Recover(I, t, A, 0.1)
-        print(f"J: {time.time() - start}")
-
         return J
 
 

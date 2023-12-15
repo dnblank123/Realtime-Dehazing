@@ -9,9 +9,10 @@ import psutil
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from collections import deque
 
-
+#https://discord.com/channels/614991078352748544/654231906531147776/1185123283243389000
 class CameraStream(QThread):
     frame_processed = pyqtSignal(np.ndarray)
+    current_process_id = psutil.Process()
 
     def __init__(self, url) -> None:
         super(CameraStream, self).__init__()
@@ -23,10 +24,13 @@ class CameraStream(QThread):
         self.use_cuda = cv2.cuda.getCudaEnabledDeviceCount() > 0
         self.thread_lock = Lock()
         self.init_video_capture()
-        self.width = 640
-        self.height = 480
+        self.width = 1280
+        self.height = 720
         self.inter = cv2.INTER_AREA
         self.stop_thread = False  # Flag to signal the threads to stop
+        self.threads_count = psutil.cpu_count() / psutil.cpu_count(logical=False)
+        self.executor = ThreadPoolExecutor(max_workers=self.threads_count + 1)
+        self.current_process_id.nice(psutil.HIGH_PRIORITY_CLASS)
 
     def init_video_capture(self):
         try:
@@ -39,6 +43,7 @@ class CameraStream(QThread):
             self.status = False
 
     def setup_logger(self):
+        logging.disable(logging.CRITICAL) # enable/disable if needed # check if logging make perf bad (and high ram usage?) on build
         logger = logging.getLogger("CameraStreamLogger")
         logger.setLevel(logging.DEBUG)
         formatter = logging.Formatter(
@@ -60,30 +65,22 @@ class CameraStream(QThread):
                 self.stop_thread = True
 
     def update(self):
+        #note: seperate "thread" to threadpool if this combine with threadpool delay happens
         grab_thread = Thread(target=self.grab_frames, args=())
         grab_thread.daemon = True
         grab_thread.start()
-
-        while not self.stop_thread:
-            try:
-                if self.capture.isOpened():
-                    self.status, frame = self.capture.retrieve()
-
-                    if self.status:
-                        self.img = cv2.resize(
-                            frame, (self.width, self.height), self.inter)
-                        # Process the frame in a separate thread
-                        process_thread = Thread(
-                            target=self.process_and_emit_frame, args=(self.img,))
-                        process_thread.daemon = True
-                        process_thread.start()
-
-                    else:
-                        self.status = False  # Ensure status is False if the capture is not opened
-            except Exception as e:
-                print(f"Error processing frame: {e}")
-                self.status = False  # Set status to False in case of error
-
+        try:
+            while not self.stop_thread and self.capture.isOpened():
+                self.status, frame = self.capture.retrieve()
+                if self.status:
+                    self.img = frame
+                    self.executor.submit(self.process_and_emit_frame, self.img)
+                else:
+                    self.status = False  # Ensure status is False if the capture is not opened
+        except Exception as e:
+            self.executor.shutdown(False)
+            print(f"Error processing frame: {e}")
+            self.status = False  # Set status to False in case of error
         grab_thread.join()
 
     def process_and_emit_frame(self, frame):
@@ -96,12 +93,13 @@ class CameraStream(QThread):
                 self.frame = dehazing_instance.image_processing(frame)
 
             with self.thread_lock:
+                self.frame_processed.emit(self.frame)
                 self.frame_count += 1
                 elapsed_time = time.time() - self.start_time
                 fps = self.frame_count / elapsed_time
                 self.logger.debug(f"FPS: {fps}")
-                self.frame_processed.emit(self.frame)
         except Exception as e:
+            self.capture.release()
             self.logger.error(f"Error processing frame: {e}")
 
     def start(self) -> None:
@@ -110,16 +108,15 @@ class CameraStream(QThread):
         self.thread.start()
 
     def stop(self) -> None:
-        # time.sleep(1)
         with self.thread_lock:
             self.stop_thread = True  # Set the flag to stop the threads
+            self.executor.shutdown(False)
             if self.thread is not None:
                 self.thread.join()
             if self.capture is not None:
                 self.capture.release()
             self.terminate()
-
-
+              
 class VideoProcessor(QObject):
     update_progress_signal = pyqtSignal(int)
 
